@@ -1,7 +1,7 @@
 ﻿/*
 The MIT License (MIT)
 
-Copyright (c) 2013 Banbury
+Copyright (c) 2013 - 2015 Banbury & Play-Em
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -37,13 +37,14 @@ public class Weightpainter : EditorWindow {
     private bool isDrawing = false;
     private float brushSize = 0.5f;
     private float weight = 1.0f;
+    private float colorTransparency = 1.0f;
     private PaintingMode mode = PaintingMode.Add;
     private int boneIndex = 0;
 
     [MenuItem("Sprites And Bones/Weight painting")]
     protected static void ShowWeightpainterWindow() {
         var wnd = GetWindow<Weightpainter>();
-        wnd.title = "Weight painting";
+        wnd.titleContent.text = "Weight painting";
 
         if (Selection.activeGameObject != null) {
             SkinnedMeshRenderer skin = Selection.activeGameObject.GetComponent<SkinnedMeshRenderer>();
@@ -63,7 +64,7 @@ public class Weightpainter : EditorWindow {
     public void OnGUI() {
         skin = (SkinnedMeshRenderer)EditorGUILayout.ObjectField("Skin", skin, typeof(SkinnedMeshRenderer), true);
 
-        if (skin != null) {
+        if (skin != null && skin.bones.Length > 0) {
             GUI.color = (isPainting) ? Color.green : Color.white;
 
             if (GUILayout.Button("Paint")) {
@@ -82,8 +83,13 @@ public class Weightpainter : EditorWindow {
 
             string[] bones = skin.bones.Select(b => b.gameObject.name).ToArray();
 			boneIndex = EditorGUILayout.Popup("Bone", boneIndex, bones);
+            colorTransparency = Mathf.Clamp(EditorGUILayout.FloatField("Color Transparency", colorTransparency), 0, 1);
 
-        }
+        } else {
+			EditorGUILayout.HelpBox("SkinnedMeshRenderer not assigned to any bones, Recalculate Bone Weights.", MessageType.Error);
+			if (SceneView.currentDrawingSceneView != null)
+				SceneView.currentDrawingSceneView.Repaint();
+		}
     }
 
     public void OnSceneGUI(SceneView sceneView) {
@@ -172,7 +178,9 @@ public class Weightpainter : EditorWindow {
 				else if (bw.boneIndex3 == boneIndex)
                     value = bw.weight3;
 
-                colors[i] = Util.HSBColor.ToColor(new Util.HSBColor(0.7f - value, 1.0f, 0.5f));
+                Util.HSBColor hsbColor = new Util.HSBColor(0.7f - value, 1.0f, 0.5f);
+				hsbColor.a = colorTransparency;
+				colors[i] = Util.HSBColor.ToColor(hsbColor);
             }
         }
 

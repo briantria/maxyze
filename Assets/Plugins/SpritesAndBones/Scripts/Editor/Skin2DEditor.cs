@@ -23,7 +23,10 @@ THE SOFTWARE.
 */
 
 using UnityEngine;
+#if UNITY_EDITOR
 using UnityEditor;
+using System.IO;
+#endif
 using System.Collections;
 
 [CustomEditor(typeof(Skin2D))]
@@ -34,18 +37,18 @@ public class Skin2DEditor : Editor {
         DrawDefaultInspector();
 
         EditorGUILayout.Separator();
-		/* Moved to skeleton for multiple Skin2D
-        if (skin.selectedBones != null && skin.GetComponent<MeshFilter>().sharedMesh != null && GUILayout.Button("Calculate weights")) {
-            skin.CalculateBoneWeights();
-        }*/
 
         if (skin.GetComponent<SkinnedMeshRenderer>().sharedMesh != null && GUILayout.Button("Save as Prefab")) {
             skin.SaveAsPrefab();
         }
 
+		EditorGUILayout.Separator();
+
         if (skin.GetComponent<SkinnedMeshRenderer>().sharedMesh != null && GUILayout.Button("Recalculate Bone Weights")) {
             skin.RecalculateBoneWeights();
         }
+
+		EditorGUILayout.Separator();
 
         if (skin.GetComponent<SkinnedMeshRenderer>().sharedMesh != null && GUILayout.Button("Create Control Points")) {
             ControlPoint.CreateControlPoints(skin.GetComponent<SkinnedMeshRenderer>());
@@ -53,6 +56,33 @@ public class Skin2DEditor : Editor {
 
         if (skin.GetComponent<SkinnedMeshRenderer>().sharedMesh != null && GUILayout.Button("Reset Control Points")) {
             skin.ResetControlPointPositions();
+        }
+
+		EditorGUILayout.Separator();
+
+        if (skin.GetComponent<SkinnedMeshRenderer>().sharedMesh != null && GUILayout.Button("Generate Mesh Asset")) {
+            #if UNITY_EDITOR
+			// Check if the Meshes directory exists, if not, create it.
+			if(!Directory.Exists("Assets/Meshes")) {
+				AssetDatabase.CreateFolder("Assets", "Meshes");
+				AssetDatabase.Refresh();
+			}
+			ScriptableObjectUtility.CreateAsset(skin.GetComponent<SkinnedMeshRenderer>().sharedMesh, "Meshes/" + skin.gameObject.name + ".Mesh");
+			#endif
+        }
+
+        if (skin.GetComponent<SkinnedMeshRenderer>().sharedMaterial != null && GUILayout.Button("Generate Material Asset")) {
+            #if UNITY_EDITOR
+			Material material = new Material(skin.GetComponent<SkinnedMeshRenderer>().sharedMaterial);
+			material.CopyPropertiesFromMaterial(skin.GetComponent<SkinnedMeshRenderer>().sharedMaterial);
+			skin.GetComponent<SkinnedMeshRenderer>().sharedMaterial = material;
+			if(!Directory.Exists("Assets/Materials")) {
+				AssetDatabase.CreateFolder("Assets", "Materials");
+				AssetDatabase.Refresh();
+			}
+			AssetDatabase.CreateAsset(material, "Assets/Materials/" + material.mainTexture.name + ".mat");
+			Debug.Log("Created material " + material.mainTexture.name + " for " + skin.gameObject.name);
+			#endif
         }
     }
 }

@@ -34,6 +34,7 @@ using System.Linq.Expressions;
 public class ControlPoint : MonoBehaviour {
 	[SerializeField] public Color color = Color.red;
 	[SerializeField] public float size = 0.01f;
+	public bool getMeshSnapShot = false;
 
 	[HideInInspector]
     public Vector3 originalPosition;
@@ -42,13 +43,15 @@ public class ControlPoint : MonoBehaviour {
 	[HideInInspector]
     public SkinnedMeshRenderer skin;
 
+	private Skeleton skeleton;
+
     #if UNITY_EDITOR
     public static void CreateControlPoints(SkinnedMeshRenderer skin) {
         if (skin.sharedMesh != null)
 		{
 			for (int i = 0; i < skin.sharedMesh.vertices.Length; i++)
 			{
-				GameObject b = new GameObject("Control Point");
+				GameObject b = new GameObject(skin.name + " Control Point");
 				// Unparent the skin temporarily before adding the control point
 				Transform skinParent = skin.transform.parent;
 				skin.transform.parent = null;
@@ -83,7 +86,7 @@ public class ControlPoint : MonoBehaviour {
 	}
 	
 	// Update is called once per frame
-	void Update () {
+	void LateUpdate () {
 		if (skin != null && skin.sharedMesh != null)
 		{
 
@@ -110,13 +113,27 @@ public class ControlPoint : MonoBehaviour {
 					Gizmos.color = Color.green;
 				}
 				else {
-					if (gameObject.name.ToUpper().EndsWith("R") || gameObject.name.ToUpper().EndsWith("RIGHT"))
+					skeleton = transform.root.GetComponentInChildren<Skeleton>();
+					if (skeleton != null)
 					{
-						Gizmos.color = new Color(255.0f/255.0f, 128.0f/255.0f, 0f, 255.0f/255.0f);
-					}
-					else if (gameObject.name.ToUpper().EndsWith("L") || gameObject.name.ToUpper().EndsWith("LEFT"))
-					{
-						Gizmos.color = Color.magenta;
+						if (gameObject.name.ToUpper().EndsWith(" R") || 
+						gameObject.name.ToUpper().EndsWith(".R") || 
+						gameObject.name.ToUpper().EndsWith("_R") || 
+						gameObject.name.ToUpper().EndsWith("RIGHT"))
+						{
+							Gizmos.color = skeleton.colorRight;
+						}
+						else if (gameObject.name.ToUpper().EndsWith(" L") || 
+						gameObject.name.ToUpper().EndsWith(".L") || 
+						gameObject.name.ToUpper().EndsWith("_L") || 
+						gameObject.name.ToUpper().EndsWith("LEFT"))
+						{
+							Gizmos.color = skeleton.colorLeft;
+						}
+						else
+						{
+							Gizmos.color = color;
+						}
 					}
 					else
 					{
@@ -126,10 +143,44 @@ public class ControlPoint : MonoBehaviour {
 				Gizmos.DrawSphere(gameObject.transform.position, size);
 			}
 		}
+		if (getMeshSnapShot)
+		{
+			GetMeshSnapshot();
+		}
     }
+
+	public void GetMeshSnapshot()
+	{
+
+		if (transform.parent.GetComponent<SkinnedMeshRenderer>() != null)
+		{
+			skin = transform.parent.GetComponent<SkinnedMeshRenderer>();
+			Mesh mesh = new Mesh();
+			skin.BakeMesh(mesh);
+			foreach (Vector3 v in mesh.vertices)
+			{
+				Gizmos.DrawSphere(transform.parent.TransformPoint(v), size);
+			}
+		}
+		getMeshSnapShot = false;
+	}
+
 #endif
 
+	public void Rename() {
+		if (skin != null && !gameObject.name.Contains(skin.name)) {
+			gameObject.name = skin.name + " " + gameObject.name;
+		}
+	}
+
 	public void ResetPosition() {
+		#if UNITY_EDITOR
+		Undo.RegisterCompleteObjectUndo(transform, "Reset Control Point");
+		Undo.RecordObject(transform, "Reset Control Point");
+		#endif
 		transform.localPosition = originalPosition;
+		#if UNITY_EDITOR
+		EditorUtility.SetDirty (transform);
+		#endif
 	}
 }

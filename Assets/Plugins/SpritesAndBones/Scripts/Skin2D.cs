@@ -24,13 +24,16 @@ THE SOFTWARE.
 using UnityEngine;
 #if UNITY_EDITOR
 using UnityEditor;
+using System.IO;
 #endif
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using UnityToolbag;
 
 [RequireComponent(typeof(MeshFilter))]
 [RequireComponent(typeof(SkinnedMeshRenderer))]
+[RequireComponent(typeof(SortingLayerExposed))]
 [ExecuteInEditMode()]
 public class Skin2D : MonoBehaviour {
 
@@ -44,6 +47,8 @@ public class Skin2D : MonoBehaviour {
     private SkinnedMeshRenderer skinnedMeshRenderer;
     private GameObject lastSelected = null;
 
+	public bool lockBoneWeights = false;
+
     #if UNITY_EDITOR
         [MenuItem("Sprites And Bones/Skin 2D")]
         public static void Create ()
@@ -54,48 +59,29 @@ public class Skin2D : MonoBehaviour {
 				SpriteRenderer spriteRenderer = o.GetComponent<SpriteRenderer>();
 				if (skin == null && spriteRenderer != null) {
 					Sprite thisSprite = spriteRenderer.sprite;
-                    SpriteMesh.CreateSpriteMeshAsset(spriteRenderer.transform, thisSprite);
+					SpriteMesh spriteMesh = new SpriteMesh();
+					spriteMesh.spriteRenderer = spriteRenderer;
+					spriteMesh.CreateSpriteMesh();
 					Texture2D spriteTexture = UnityEditor.Sprites.SpriteUtility.GetSpriteTexture(spriteRenderer.sprite, false);
 					Material spriteMaterial = new Material(spriteRenderer.sharedMaterial);
 					spriteMaterial.CopyPropertiesFromMaterial(spriteRenderer.sharedMaterial);
 					spriteMaterial.mainTexture = spriteTexture;
+					string sortLayerName = spriteRenderer.sortingLayerName;
+					int sortOrder = spriteRenderer.sortingOrder;
 					DestroyImmediate(spriteRenderer);
 					Skin2D skin2D = o.AddComponent<Skin2D>();
 					skin2D.sprite = thisSprite;
 					skin = o.GetComponent<SkinnedMeshRenderer>();
 					MeshFilter filter = o.GetComponent<MeshFilter>();
 					skin.material = spriteMaterial;
+					skin.sortingLayerName = sortLayerName;
+					skin.sortingOrder = sortOrder;
 					filter.mesh = (Mesh)Selection.activeObject;
 					if (filter.sharedMesh != null && skin.sharedMesh == null) {
 						skin.sharedMesh = filter.sharedMesh;
 					}
-					Skeleton skeleton = o.transform.root.GetComponent<Skeleton>();
-					if (skeleton != null)
-					{
-						// Generate the mesh and calculate the weights if the root transform has a skeleton
-						skeleton.CalculateWeights(true);
-						// Debug.Log("Calculated weights for " + o.name);
-
-						// Try to initialize the parent bone to this skin
-						Bone bone = o.transform.parent.GetComponent<Bone>();
-						if (bone != null)
-						{
-							Mesh m = skin.sharedMesh.Clone();
-							List<BoneWeight> weights = m.boneWeights.ToList();
-
-							for (int i = 0; i < m.vertices.Length; i++) {
-								BoneWeight bw = weights[i];
-								bw = bw.SetWeight(bone.index, 1);
-								weights[i] = bw.Clone();
-							}
-
-							skin.sharedMesh.boneWeights = weights.ToArray();
-							EditorUtility.SetDirty(skin.gameObject);
-							if (PrefabUtility.GetPrefabType(skin.gameObject) != PrefabType.None) {
-								AssetDatabase.SaveAssets();
-							}
-						}
-					}
+					// Recalculate the bone weights for the new mesh
+					skin2D.RecalculateBoneWeights();
 				}
 				else
 				{
@@ -118,12 +104,22 @@ public class Skin2D : MonoBehaviour {
 #if UNITY_EDITOR
         CalculateVertexColors();
 #endif
+		if (Application.isPlaying) {
+			Mesh oldMesh = GetComponent<SkinnedMeshRenderer>().sharedMesh;
+			if (oldMesh != null) {
+				Mesh newMesh = (Mesh)Object.Instantiate(oldMesh);
+				GetComponent<SkinnedMeshRenderer>().sharedMesh = newMesh;
+			}
+		}
     }
 
     // Update is called once per frame
     void Update () {
         if (MeshFilter.sharedMesh != null && GetComponent<SkinnedMeshRenderer>().sharedMesh == null) {
             GetComponent<SkinnedMeshRenderer>().sharedMesh = MeshFilter.sharedMesh;
+        }
+		if (GetComponent<SortingLayerExposed>() == null) {
+            gameObject.AddComponent<SortingLayerExposed>();
         }
     }
 
@@ -167,66 +163,79 @@ public class Skin2D : MonoBehaviour {
 
     }
 
+    public void CalculateBoneWeights(Bone[] bones) {
+		CalculateBoneWeights(bones, false);
+    }
+
     public void CalculateBoneWeights(Bone[] bones, bool weightToParent) {
-		if(MeshFilter.sharedMesh == null)
-		{
-			Debug.Log("No Shared Mesh.");
-			return;
+		if (!lockBoneWeights) {
+			if(MeshFilter.sharedMesh == null)
+			{
+				Debug.Log("No Shared Mesh.");
+				return;
+			}
+			Mesh mesh = new Mesh();
+			mesh.name = "Generated Mesh";
+			mesh.vertices = MeshFilter.sharedMesh.vertices;
+			mesh.triangles = MeshFilter.sharedMesh.triangles;
+			mesh.normals = MeshFilter.sharedMesh.normals;
+			mesh.uv = MeshFilter.sharedMesh.uv;
+			mesh.uv2 = MeshFilter.sharedMesh.uv2;
+			mesh.bounds = MeshFilter.sharedMesh.bounds;
+
+			if (bones != null && mesh != null) {
+				boneWeights = new Bone2DWeights();
+				boneWeights.weights = new Bone2DWeight[] { };
+				
+				int index = 0;
+				foreach (Bone bone in bones) {
+					int i=0;
+
+					bool boneActive = bone.gameObject.activeSelf;
+					bone.gameObject.SetActive(true);
+					foreach (Vector3 v in mesh.vertices) {
+						float influence;
+						if (!weightToParent || weightToParent && bone.transform != transform.parent)
+						{
+							influence = bone.GetInfluence(v + transform.position);
+						}
+						else
+						{
+							influence = 1.0f;
+						}
+
+						boneWeights.SetWeight(i, bone.name, index, influence);
+					
+						i++;
+					}
+					
+					index++;
+					bone.gameObject.SetActive(boneActive);
+				}
+
+				BoneWeight[] unitweights = boneWeights.GetUnityBoneWeights();
+				mesh.boneWeights = unitweights;
+
+				Transform[] bonesArr = bones.Select(b => b.transform).ToArray();
+				Matrix4x4[] bindPoses = new Matrix4x4[bonesArr.Length];
+
+				for (int i = 0; i < bonesArr.Length; i++) {
+					bindPoses[i] = bonesArr[i].worldToLocalMatrix * transform.localToWorldMatrix;
+				}
+
+				mesh.bindposes = bindPoses;
+
+				var skinRenderer = GetComponent<SkinnedMeshRenderer>();
+				if (skinRenderer.sharedMesh != null && !AssetDatabase.Contains(skinRenderer.sharedMesh.GetInstanceID()))
+					Object.DestroyImmediate(skinRenderer.sharedMesh);
+				skinRenderer.bones = bonesArr;
+				skinRenderer.sharedMesh = mesh;
+				EditorUtility.SetDirty(skinRenderer.gameObject);
+				if (PrefabUtility.GetPrefabType(skinRenderer.gameObject) != PrefabType.None) {
+					AssetDatabase.SaveAssets();
+				}
+			}
 		}
-        Mesh mesh = new Mesh();
-        mesh.name = "Generated Mesh";
-        mesh.vertices = MeshFilter.sharedMesh.vertices;
-        mesh.triangles = MeshFilter.sharedMesh.triangles;
-        mesh.normals = MeshFilter.sharedMesh.normals;
-        mesh.uv = MeshFilter.sharedMesh.uv;
-        mesh.uv2 = MeshFilter.sharedMesh.uv2;
-        mesh.bounds = MeshFilter.sharedMesh.bounds;
-
-		if (bones != null) {
-            boneWeights = new Bone2DWeights();
-			boneWeights.weights = new Bone2DWeight[] { };
-            
-            int index = 0;
-            foreach (Bone bone in bones) {
-                int i=0;
-
-                
-	            foreach (Vector3 v in mesh.vertices) {
-	                float influence;
-					if (!weightToParent || bone.transform != transform.parent)
-					{
-						influence = bone.GetInfluence(v + transform.position);
-					}
-					else
-					{
-						influence = 1.0f;
-					}
-
-					boneWeights.SetWeight(i, bone.name, index, influence);
-                    i++;
-	            }
-                
-                index++;
-            }
-
-            BoneWeight[] unitweights = boneWeights.GetUnityBoneWeights();
-            mesh.boneWeights = unitweights;
-
-			Transform[] bonesArr = bones.Select(b => b.transform).ToArray();
-            Matrix4x4[] bindPoses = new Matrix4x4[bonesArr.Length];
-
-            for (int i = 0; i < bonesArr.Length; i++) {
-                bindPoses[i] = bonesArr[i].worldToLocalMatrix * transform.localToWorldMatrix;
-            }
-
-            mesh.bindposes = bindPoses;
-
-            var skinRenderer = GetComponent<SkinnedMeshRenderer>();
-            if (skinRenderer.sharedMesh != null && !AssetDatabase.Contains(skinRenderer.sharedMesh.GetInstanceID()))
-                Object.DestroyImmediate(skinRenderer.sharedMesh);
-            skinRenderer.bones = bonesArr;
-            skinRenderer.sharedMesh = mesh;
-        }
     }
 
     private void CalculateVertexColors() {
@@ -274,7 +283,31 @@ public class Skin2D : MonoBehaviour {
     }
 
     public void SaveAsPrefab() {
-        string path = "Assets/" + gameObject.name + ".prefab";
+
+		// Check if the Prefabs directory exists, if not, create it.
+        DirectoryInfo prefabDir = new DirectoryInfo("Assets/Prefabs");
+		if (Directory.Exists(prefabDir.FullName) == false)
+        {
+            Directory.CreateDirectory(prefabDir.FullName);
+        }
+
+		Skeleton[] skeletons = transform.root.gameObject.GetComponentsInChildren<Skeleton>(true);
+		Skeleton skeleton = null;
+		foreach (Skeleton s in skeletons)
+		{
+			if (transform.IsChildOf(s.transform))
+			{
+				skeleton = s;
+			}
+		}
+
+        DirectoryInfo prefabSkelDir = new DirectoryInfo("Assets/Prefabs/" + skeleton.gameObject.name);
+		if (Directory.Exists(prefabSkelDir.FullName) == false)
+        {
+            Directory.CreateDirectory(prefabSkelDir.FullName);
+        }
+
+        string path = "Assets/Prefabs/" + skeleton.gameObject.name + "/" + gameObject.name + ".prefab";
 
         Object obj = PrefabUtility.CreateEmptyPrefab(path);
 
@@ -284,7 +317,15 @@ public class Skin2D : MonoBehaviour {
     }
 
 	public void RecalculateBoneWeights() {
-		Skeleton skeleton = gameObject.transform.root.GetComponent<Skeleton>();
+		Skeleton[] skeletons = transform.root.gameObject.GetComponentsInChildren<Skeleton>(true);
+		Skeleton skeleton = null;
+		foreach (Skeleton s in skeletons)
+		{
+			if (transform.IsChildOf(s.transform))
+			{
+				skeleton = s;
+			}
+		}
 		if (skeleton != null)
 		{
 			skeleton.CalculateWeights(true);
